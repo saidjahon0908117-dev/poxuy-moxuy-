@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Neon 3D Hands</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<style>
+  :root{--cy:#27f5ff;--mg:#ff3df0;--lime:#9dff3d}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#03020a;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff;user-select:none}
+  #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);filter:brightness(.42) contrast(1.15) saturate(.55)}
+  #tint{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 45%,transparent 35%,rgba(10,0,30,.75) 100%),linear-gradient(160deg,rgba(80,0,160,.25),rgba(0,60,120,.2));pointer-events:none}
+  #gl{position:fixed;inset:0;width:100%;height:100%;mix-blend-mode:screen}
+  #skel{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+  #flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .5s}
+  #flash.on{opacity:.55;transition:none}
+  #hud{position:fixed;top:max(10px,env(safe-area-inset-top));left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+  .pill{padding:8px 18px;border-radius:999px;background:rgba(10,4,30,.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid var(--cy);box-shadow:0 0 14px rgba(39,245,255,.45),inset 0 0 12px rgba(39,245,255,.15);font-size:15px;font-weight:700;letter-spacing:.3px;text-shadow:0 0 8px var(--cy)}
+  #badges{display:flex;gap:8px;font-size:12px}
+  .badge{padding:4px 10px;border-radius:999px;background:rgba(10,4,30,.5);border:1px solid rgba(255,255,255,.25);opacity:.85}
+  .badge.on{border-color:var(--lime);color:var(--lime);box-shadow:0 0 12px var(--lime);text-shadow:0 0 8px var(--lime);opacity:1}
+  #toast{position:fixed;left:50%;top:32%;transform:translate(-50%,-10px) scale(.9);padding:12px 22px;border-radius:16px;background:rgba(10,4,30,.7);border:1px solid var(--mg);box-shadow:0 0 24px rgba(255,61,240,.6);font-size:18px;font-weight:800;text-shadow:0 0 10px var(--mg);opacity:0;transition:all .3s;pointer-events:none;text-align:center;max-width:86%}
+  #toast.on{opacity:1;transform:translate(-50%,0) scale(1)}
+  #idle{position:fixed;left:14%;right:14%;bottom:max(18px,env(safe-area-inset-bottom));text-align:center;font-size:12px;opacity:0;transition:opacity .3s;pointer-events:none}
+  #idle.on{opacity:1}
+  #idle div.bar{height:5px;border-radius:5px;background:rgba(255,255,255,.15);margin-top:6px;overflow:hidden}
+  #idle div.fill{height:100%;width:0;background:linear-gradient(90deg,var(--cy),var(--mg));box-shadow:0 0 10px var(--mg)}
+  #helpBtn{position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));width:44px;height:44px;border-radius:50%;padding:0;font-size:20px;z-index:4;border-width:1.5px}
+  #help{position:fixed;inset:0;z-index:6;background:rgba(5,2,18,.92);backdrop-filter:blur(6px);display:none;overflow:auto;padding:max(18px,env(safe-area-inset-top)) 20px 30px}
+  #help.on{display:block}
+  #help h2{margin:6px 0 14px;color:var(--mg);text-shadow:0 0 14px var(--mg);font-size:22px}
+  .row{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.08);font-size:14px;line-height:1.4}
+  .row b{font-size:22px;min-width:44px;text-align:center}
+  .row span em{color:var(--cy);font-style:normal;font-weight:700}
+  #start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:radial-gradient(circle at 50% 38%,#1b0640,#03020a 72%);z-index:8;text-align:center;padding:24px}
+  #start h1{margin:0;font-size:34px;letter-spacing:3px;color:var(--mg);text-shadow:0 0 14px var(--mg),0 0 44px #a0f}
+  #start p{margin:0;opacity:.8;max-width:330px;font-size:14px;line-height:1.55}
+  button{font:inherit;font-size:18px;font-weight:700;color:#fff;background:transparent;border:2px solid var(--cy);border-radius:999px;padding:14px 36px;box-shadow:0 0 14px var(--cy),inset 0 0 14px rgba(39,245,255,.35);text-shadow:0 0 8px var(--cy);cursor:pointer}
+  button:active{transform:scale(.96)}
+  #msg{color:#ff6b9d;font-size:13px;min-height:18px;max-width:320px}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay></video>
+<div id="tint"></div>
+<canvas id="gl"></canvas>
+<canvas id="skel"></canvas>
+<div id="flash"></div>
+
+<div id="hud">
+  <div class="pill" id="pose">🖐 Qo‘lingizni ko‘rsating</div>
+  <div id="badges"><div class="badge" id="bCount">Shakllar 0</div><div class="badge" id="bGrav">⬇ Gravitatsiya</div></div>
+</div>
+<div id="toast"></div>
+<div id="idle"><span id="idleTxt">Harakatsizlik — shakllar erib ketmoqda…</span><div class="bar"><div class="fill" id="idleFill"></div></div></div>
+<button id="helpBtn">?</button>
+
+<div id="help">
+  <h2>✨ Ishoralar</h2>
+  <div class="row"><b>☝</b><span><em>Havoda chizing</em> (faqat ko‘rsatkich barmoq). Chizib to‘xtang yoki qo‘lingizni o‘zgartiring:<br>○ shar · ▭ quti · △ piramida · ⬠ kristal · ⬡ olmos · ☆ yulduz · ／ neon tayoq</span></div>
+  <div class="row"><b>🤏</b><span><em>Chimchilash</em> (bosh + ko‘rsatkich) — shaklni ushlang, siljiting, buring. Qo‘yib yuborsangiz u <em>otilib</em> ketadi va devordan qaytadi.</span></div>
+  <div class="row"><b>🙌</b><span>Bitta shaklni <em>ikki qo‘l bilan</em> ushlang — oraliq masofa kattalashtiradi/kichraytiradi.</span></div>
+  <div class="row"><b>🖼</b><span>Ikki qo‘lda <em>“L” burchak</em> (bosh + ko‘rsatkich) — ramka hosil qiling va 1 soniya ushlang: ramka o‘lchamida 3D quti.</span></div>
+  <div class="row"><b>✌</b><span><em>Raqam:</em> barmoqlarni qimirlatmay 1.5 soniya ushlang → 3D neon raqam. Ikki qo‘l bilan 10 gacha. “1” uchun ko‘rsatkichni qimirlatmay ushlang.</span></div>
+  <div class="row"><b>✊</b><span><em>Musht</em> (0.5 s) — <em>qora tuynuk magniti</em>: shakllar atrofingizda aylanadi.</span></div>
+  <div class="row"><b>🤘</b><span><em>Zarba to‘lqini</em> — shakllarni itarib yuboradi.</span></div>
+  <div class="row"><b>👍</b><span><em>Gravitatsiya</em> yoqish / o‘chirish.</span></div>
+  <div class="row"><b>✋✊</b><span>Kaftni <em>ikki marta ochib-yoping</em> — hamma shakllar portlab yo‘qoladi.</span></div>
+  <div class="row"><b>💤</b><span>Qo‘l 3 soniya ko‘rinmasa yoki 8 soniya harakatsiz tursa, shakllar o‘zi erib ketadi.</span></div>
+  <p style="text-align:center;margin-top:22px"><button id="helpClose">Tushundim</button></p>
+</div>
+
+<div id="start">
+  <h1>NEON 3D</h1>
+  <p>Kameraga ruxsat bering. Barmog‘ingiz bilan havoda shakl chizing — u 3D neon jismga aylanadi va uni qo‘lingiz bilan boshqarasiz.</p>
+  <button id="go">Kamerani yoqish</button>
+  <div id="msg"></div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+/* ================= Umumiy ================= */
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (e) {} }
+const haptic = (t = 'light') => { try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(t); } catch (e) {} };
+const notif = (t = 'success') => { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(t); } catch (e) {} };
+const $ = id => document.getElementById(id);
+const video = $('video');
+const clamp = THREE.MathUtils.clamp;
+const MAX_SHAPES = 14, IDLE_NOHAND = 3, IDLE_STILL = 8;
+let started = false;
+
+/* ================= Ovoz ================= */
+let AC = null;
+function initAudio() { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+function tone(f, dur = .12, type = 'sine', vol = .07, slide = 0, delay = 0) {
+  if (!AC) return;
+  const t = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + dur + .02);
+}
+const sfx = {
+  spawn() { [523, 659, 784, 1047].forEach((f, i) => tone(f, .2, 'triangle', .06, 0, i * .055)); },
+  grab() { tone(880, .06, 'square', .035); },
+  drop() { tone(300, .1, 'sine', .06, -120); },
+  clear() { tone(700, .6, 'sawtooth', .05, -620); tone(90, .5, 'sine', .14, -50); },
+  boom() { tone(140, .45, 'sine', .16, -90); tone(420, .2, 'square', .03, -300); },
+  grav() { tone(320, .3, 'sine', .08, 260); },
+  tick() { tone(1400, .03, 'square', .025); },
+  bounce() { tone(220, .06, 'triangle', .04, -60); },
+};
+
+/* ================= Sahna / Bloom ================= */
+const renderer = new THREE.WebGLRenderer({ canvas: $('gl'), antialias: false, powerPreference: 'high-performance' });
+renderer.setClearColor(0x000000, 1);
+const PR = Math.min(devicePixelRatio || 1, 1.5);
+renderer.setPixelRatio(PR);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+camera.position.z = 6;
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1.1, 0.6, 0.06);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+const world = new THREE.Group(); scene.add(world);
+
+let CV = { w: 1, h: 1, vw: 640, vh: 480, sc: 1, ox: 0, oy: 0 };
+function updateCover() {
+  const w = innerWidth, h = innerHeight, vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+  const sc = Math.max(w / vw, h / vh);
+  CV = { w, h, vw, vh, sc, ox: (w - vw * sc) / 2, oy: (h - vh * sc) / 2 };
+}
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); composer.setPixelRatio(PR); composer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  $('skel').width = w; $('skel').height = h; updateCover();
+}
+addEventListener('resize', resize);
+video.addEventListener('loadedmetadata', updateCover);
+resize();
+
+const visH = () => 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+const toScreen = p => [CV.w - (p.x * CV.vw * CV.sc + CV.ox), p.y * CV.vh * CV.sc + CV.oy];
+const _v = new THREE.Vector3();
+function s2w(sx, sy, z = 0, out = new THREE.Vector3()) {
+  _v.set(sx / CV.w * 2 - 1, -(sy / CV.h) * 2 + 1, .5).unproject(camera).sub(camera.position).normalize();
+  const t = (z - camera.position.z) / _v.z;
+  return out.copy(camera.position).addScaledVector(_v, t);
+}
+function w2s(pos) { _v.copy(pos).project(camera); return [(_v.x + 1) / 2 * CV.w, (1 - _v.y) / 2 * CV.h]; }
+
+/* ================= Zarrachalar ================= */
+const PN = 1000;
+const pPos = new Float32Array(PN * 3), pCol = new Float32Array(PN * 3), pBase = new Float32Array(PN * 3);
+const pVel = new Float32Array(PN * 3), pLife = new Float32Array(PN), pDecay = new Float32Array(PN);
+for (let i = 0; i < PN; i++) pPos[i * 3 + 1] = -999;
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
+const points = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.075, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+points.frustumCulled = false; scene.add(points);
+let pi = 0;
+function emit(x, y, z, vx, vy, vz, c, decay = 1) {
+  const i = pi++ % PN;
+  pPos[i*3] = x; pPos[i*3+1] = y; pPos[i*3+2] = z;
+  pVel[i*3] = vx; pVel[i*3+1] = vy; pVel[i*3+2] = vz;
+  pBase[i*3] = c.r * 2; pBase[i*3+1] = c.g * 2; pBase[i*3+2] = c.b * 2;
+  pLife[i] = 1; pDecay[i] = decay * (.8 + Math.random() * .6);
+}
+function burst(pos, c, n = 30, sp = 3) {
+  for (let k = 0; k < n; k++) {
+    const th = Math.random() * 6.283, ph = Math.acos(2 * Math.random() - 1), s = sp * (.3 + Math.random());
+    emit(pos.x, pos.y, pos.z, Math.sin(ph) * Math.cos(th) * s, Math.sin(ph) * Math.sin(th) * s, Math.cos(ph) * s, c, 1);
+  }
+}
+function updateParticles(dt) {
+  for (let i = 0; i < PN; i++) {
+    if (pLife[i] > 0) {
+      pLife[i] -= dt * pDecay[i];
+      const dr = 1 - 1.4 * dt;
+      pVel[i*3] *= dr; pVel[i*3+1] *= dr; pVel[i*3+2] *= dr;
+      pPos[i*3] += pVel[i*3] * dt; pPos[i*3+1] += pVel[i*3+1] * dt; pPos[i*3+2] += pVel[i*3+2] * dt;
+      const l = Math.max(pLife[i], 0);
+      pCol[i*3] = pBase[i*3] * l; pCol[i*3+1] = pBase[i*3+1] * l; pCol[i*3+2] = pBase[i*3+2] * l;
+    } else { pPos[i*3+1] = -999; pCol[i*3] = pCol[i*3+1] = pCol[i*3+2] = 0; }
+  }
+  pGeo.attributes.position.needsUpdate = true; pGeo.attributes.color.needsUpdate = true;
+}
+
+/* Zarba halqalari */
+const rings = [];
+function shockRing(pos, c) {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(1, .025, 8, 72),
+    new THREE.MeshBasicMaterial({ color: c.clone().multiplyScalar(2.2), transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  m.position.copy(pos); m.scale.setScalar(.1); world.add(m); rings.push(m);
+}
+function updateRings(dt) {
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const m = rings[i]; m.scale.addScalar(dt * 10); m.material.opacity -= dt * 1.5;
+    if (m.material.opacity <= 0) { world.remove(m); m.geometry.dispose(); m.material.dispose(); rings.splice(i, 1); }
+  }
+}
+
+/* ================= Shakllar ================= */
+const HUES = [0.5, 0.88, 0.33, 0.08, 0.75, 0.58, 0.15, 0.95];
+let hueIdx = 0;
+const shapes = [];
+const LAYER_INT = [2.0, .8, .32];
+
+function buildShape(geo, mode, radius, type) {
+  const hue = HUES[hueIdx++ % HUES.length];
+  const base = new THREE.Color().setHSL(hue, 1, .55);
+  const g = new THREE.Group();
+  const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: base.clone().multiplyScalar(.6), transparent: true, opacity: .16, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  const lg = mode === 'e' ? new THREE.EdgesGeometry(geo, 20) : new THREE.WireframeGeometry(geo);
+  const layers = [1, 1.035, 1.08].map(s => {
+    const l = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: base.clone(), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    l.scale.setScalar(s); return l;
+  });
+  g.add(fill, ...layers); g.scale.setScalar(0.0001);
+  return {
+    g, base, fill, layers, geos: [geo, lg], radius, type,
+    vel: new THREE.Vector3(), holdVel: new THREE.Vector3(), target: new THREE.Vector3(), prevPos: new THREE.Vector3(),
+    rotVel: new THREE.Vector3((Math.random() - .5) * 1.4, (Math.random() - .5) * 1.4, 0),
+    sc: 0, scT: 1, sc0: 1, holders: [], z0: 0, rot0: 0, rotT: 0, dist0: 1, ang0: 0,
+    phase: Math.random() * 6.28, bright: 1, dying: false, born: performance.now() / 1000, hasRotT: false,
+  };
+}
+function addShape(S, pos) {
+  S.g.position.copy(pos); S.target.copy(pos); S.prevPos.copy(pos);
+  world.add(S.g); shapes.push(S);
+  burst(pos, S.base, 36, 3.2); shockRing(pos, S.base);
+  bloomKick = 1; sfx.spawn(); haptic('medium');
+  state.lastActive = performance.now() / 1000;
+  const alive = shapes.filter(s => !s.dying);
+  if (alive.length > MAX_SHAPES) { const old = alive.find(s => !s.holders.length && s !== S); if (old) dissolve(old); }
+}
+function removeShape(S) {
+  world.remove(S.g);
+  S.geos.forEach(x => x.dispose()); S.fill.material.dispose(); S.layers.forEach(l => l.material.dispose());
+  const i = shapes.indexOf(S); if (i >= 0) shapes.splice(i, 1);
+}
+function dissolve(S) {
+  if (S.dying) return;
+  burst(S.g.position, S.base, 28, 2.4);
+  S.dying = true; S.scT = 0;
+  S.holders.forEach(i => { if (slots[i]) slots[i].holding = null; }); S.holders = [];
+}
+
+/* 7-segmentli 3D raqam */
+const SEG = { 0: 'abcdef', 1: 'bc', 2: 'abdeg', 3: 'abcdg', 4: 'bcfg', 5: 'acdfg', 6: 'acdefg', 7: 'abc', 8: 'abcdefg', 9: 'abcdfg' };
+function digitGeo(n) {
+  const s = String(n), parts = [];
+  const P = { a: [0, .6, 'h'], b: [.3, .3, 'v'], c: [.3, -.3, 'v'], d: [0, -.6, 'h'], e: [-.3, -.3, 'v'], f: [-.3, .3, 'v'], g: [0, 0, 'h'] };
+  s.split('').forEach((ch, i) => {
+    const ox = (i - (s.length - 1) / 2) * 0.95;
+    for (const k of SEG[ch]) {
+      const [x, y, t] = P[k];
+      const b = t === 'h' ? new THREE.BoxGeometry(.5, .13, .16) : new THREE.BoxGeometry(.13, .5, .16);
+      b.translate(x + ox, y, 0); parts.push(b);
+    }
+  });
+  return mergeGeometries(parts);
+}
+
+function starGeo(R) {
+  const sh = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const a = Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? R * .45 : R;
+    const x = Math.cos(a) * r, y = Math.sin(a) * r; i ? sh.lineTo(x, y) : sh.moveTo(x, y);
+  }
+  sh.closePath();
+  const g = new THREE.ExtrudeGeometry(sh, { depth: R * .35, bevelEnabled: false });
+  g.translate(0, 0, -R * .175); return g;
+}
+
+/* ================= Shaklni tanish ================= */
+function resample(P, N) {
+  const cum = [0]; for (let i = 1; i < P.length; i++) cum.push(cum[i-1] + Math.hypot(P[i].x - P[i-1].x, P[i].y - P[i-1].y));
+  const T = cum[cum.length - 1], out = []; let j = 1;
+  for (let k = 0; k < N; k++) {
+    const target = k * T / N;
+    while (j < cum.length - 1 && cum[j] < target) j++;
+    const a = P[j-1], b = P[j], seg = cum[j] - cum[j-1] || 1, u = (target - cum[j-1]) / seg;
+    out.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+  }
+  return out;
+}
+function recognize(pts) {
+  const n0 = pts.length; let L = 0;
+  for (let i = 1; i < n0; i++) L += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  pts.forEach(p => { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); });
+  const bw = x1 - x0, bh = y1 - y0, diag = Math.hypot(bw, bh);
+  if (L < 150 || diag < 70) return null;
+  const gap = Math.hypot(pts[0].x - pts[n0-1].x, pts[0].y - pts[n0-1].y);
+  const info = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, bw, bh };
+  if (L / Math.max(gap, 1) < 1.18 && gap > diag * .7) return { kind: 'line', a: pts[0], b: pts[n0-1], ...info };
+  if (gap > Math.max(bw, bh) * .45) return L > 300 ? { kind: 'open' } : null;
+  const N = 64, k = 4, P = resample(pts.concat([pts[0]]), N);
+  const turn = P.map((_, i) => {
+    const a = P[(i - k + N) % N], b = P[i], c = P[(i + k) % N];
+    const v1x = b.x - a.x, v1y = b.y - a.y, v2x = c.x - b.x, v2y = c.y - b.y;
+    const m = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y) || 1;
+    return Math.acos(clamp((v1x * v2x + v1y * v2y) / m, -1, 1)) * 57.2958;
+  });
+  let corners = 0;
+  for (let i = 0; i < N; i++) {
+    if (turn[i] < 42) continue; let ok = true;
+    for (let j = 1; j <= k; j++) {
+      if (turn[(i - j + N) % N] >= turn[i]) ok = false;
+      if (turn[(i + j) % N] > turn[i]) ok = false;
+    }
+    if (ok) corners++;
+  }
+  let kind;
+  if (corners <= 2) kind = 'circle'; else if (corners === 3) kind = 'triangle'; else if (corners === 4) kind = 'rect';
+  else if (corners === 5) kind = 'pent'; else if (corners <= 7) kind = 'gem'; else kind = 'star';
+  return { kind, ...info };
+}
+
+const NAMES = { circle: '🔵 Shar', triangle: '🔺 Piramida', rect: '🟦 Quti', pent: '⬠ Kristal', gem: '💎 Olmos', star: '⭐ Yulduz', line: '⚡ Neon tayoq' };
+function spawnRecognized(res) {
+  const wpp = visH() / CV.h, pos = s2w(res.cx, res.cy, 0);
+  const R = clamp(Math.max(res.bw, res.bh) / 2 * wpp, .35, 2.2);
+  let S;
+  switch (res.kind) {
+    case 'circle': { const r = clamp((res.bw + res.bh) / 4 * wpp, .35, 2.2); S = buildShape(new THREE.SphereGeometry(r, 18, 12), 'w', r, 'sphere'); break; }
+    case 'rect': { const w = clamp(res.bw * wpp, .45, 4.2), h = clamp(res.bh * wpp, .45, 4.2); S = buildShape(new THREE.BoxGeometry(w, h, Math.min(w, h) * .8), 'e', Math.hypot(w, h) / 2.4, 'box'); break; }
+    case 'triangle': S = buildShape(new THREE.ConeGeometry(R, R * 1.6, 3), 'e', R, 'pyramid'); break;
+    case 'pent': S = buildShape(new THREE.DodecahedronGeometry(R), 'e', R, 'crystal'); break;
+    case 'gem': S = buildShape(new THREE.OctahedronGeometry(R * 1.1), 'e', R, 'gem'); break;
+    case 'star': S = buildShape(starGeo(R), 'e', R, 'star'); break;
+    case 'line': {
+      const len = clamp(Math.hypot(res.b.x - res.a.x, res.b.y - res.a.y) * wpp, .8, 5);
+      S = buildShape(new THREE.BoxGeometry(len, .1, .1), 'e', len / 2.4, 'rod');
+      S.g.rotation.z = Math.atan2(-(res.b.y - res.a.y), res.b.x - res.a.x); S.rotVel.set(0, 0, 0); S.rotVel.x = .6;
+      break;
+    }
+  }
+  addShape(S, pos); toast(NAMES[res.kind] + ' yaratildi');
+}
+function spawnDigit(n, sx, sy) {
+  const S = buildShape(digitGeo(n), 'e', n >= 10 ? 1.2 : .8, 'digit');
+  S.rotVel.set(0, .9, 0); S.g.rotation.x = .15;
+  addShape(S, s2w(sx, sy, 0)); toast('🔢 ' + n);
+}
+function spawnBoxFromRect(r) {
+  const wpp = visH() / CV.h;
+  const w = clamp((r.x1 - r.x0) * wpp, .5, 4.5), h = clamp((r.y1 - r.y0) * wpp, .5, 4.5);
+  const S = buildShape(new THREE.BoxGeometry(w, h, Math.min(w, h) * .7), 'e', Math.hypot(w, h) / 2.4, 'box');
+  addShape(S, s2w((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 0)); toast('🖼 Ramka → 3D quti');
+}
+
+/* ================= Qo‘l holati ================= */
+const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z - b.z) * .5);
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+const newSlot = () => ({ active: false, vis: false, lastSeen: 0, lm: null, f: [0,0,0,0,0], count: 0, palm: .1, ratio: 1,
+  center: [0, 0], prevC: null, speed: 0, roll: 0, pinchSm: null, tipSm: null, pose: 'none', cand: 'none', candN: 0,
+  poseSince: 0, poseChanged: false, pinchOn: false, holding: null, palm0: .1, roll0: 0, openness: null, openAt: 0 });
+const slots = [newSlot(), newSlot()];
+const state = { gravity: false, magnets: [], closeEvents: [], lastHandSeen: 0, lastActive: 0, lastGravity: 0, lastShock: 0,
+  numKey: -1, numSince: 0, numLock: false, numProg: 0, numPos: [0, 0], frame: null, frameLock: false, frameSince: 0, frameProg: 0, lastRes: 0 };
+const pen = { active: false, slot: -1, pts: [], start: 0, lastMove: 0, len: 0, hue: 0, digitDone: false, fades: [] };
+
+function analyzeHand(lm) {
+  const palm = Math.max(d3(lm[0], lm[9]), .02);
+  const ext = (t, p) => d3(lm[t], lm[0]) > d3(lm[p], lm[0]) * 1.08 ? 1 : 0;
+  const f = [(d3(lm[4], lm[17]) > d3(lm[3], lm[17]) * 1.08 && d3(lm[4], lm[5]) > d3(lm[3], lm[5])) ? 1 : 0, ext(8, 6), ext(12, 10), ext(16, 14), ext(20, 18)];
+  const a = toScreen(lm[4]), b = toScreen(lm[8]), c = toScreen(lm[0]), e = toScreen(lm[9]);
+  return { lm, f, palm, ratio: d3(lm[4], lm[8]) / palm, idxOut: d3(lm[8], lm[0]) > d3(lm[5], lm[0]) * 1.12,
+    pinch: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], tip: b, center: e, roll: Math.atan2(e[0] - c[0], -(e[1] - c[1])), count: f.reduce((x, y) => x + y, 0) };
+}
+function classify(h, pinchOn) {
+  const [t, i, m, r, p] = h.f;
+  if (h.idxOut && h.ratio < (pinchOn ? .55 : .34)) return 'pinch';
+  if (i && !m && !r && !p) return 'point';
+  if (t && !i && !m && !r && !p && h.lm[4].y < h.lm[0].y - h.palm * .9) return 'thumb';
+  if (i && p && !m && !r) return 'rock';
+  if (h.count === 0) return 'fist';
+  if (i && m && !r && !p) return 'peace';
+  return 'num';
+}
+const isFrame = s => s.f[0] && s.f[1] && !s.f[2] && !s.f[3] && !s.f[4] && s.ratio > .55;
+
+function applyHand(s, h, now, dt) {
+  s.active = true; s.vis = true; s.lastSeen = now; s.lm = h.lm; s.f = h.f; s.count = h.count; s.palm = h.palm; s.ratio = h.ratio; s.roll = h.roll;
+  s.speed = s.prevC ? Math.hypot(h.center[0] - s.prevC[0], h.center[1] - s.prevC[1]) / Math.max(dt, .01) / CV.h : 0;
+  s.prevC = h.center; s.center = h.center;
+  const sm = (old, nw, a) => old ? [old[0] + (nw[0] - old[0]) * a, old[1] + (nw[1] - old[1]) * a] : nw.slice();
+  s.pinchSm = sm(s.pinchSm, h.pinch, .6); s.tipSm = sm(s.tipSm, h.tip, .55);
+  const raw = classify(h, s.pinchOn);
+  if (raw === s.cand) s.candN++; else { s.cand = raw; s.candN = 1; }
+  s.poseChanged = false;
+  if (s.candN >= (raw === 'pinch' ? 2 : 3) && s.pose !== s.cand) { s.pose = s.cand; s.poseSince = now; s.poseChanged = true; s.pinchOn = s.pose === 'pinch'; }
+}
+
+function processHands(r) {
+  const now = performance.now() / 1000, dt = Math.min(now - state.lastRes || .033, .2); state.lastRes = now;
+  const hs = (r.multiHandLandmarks || []).slice(0, 2).map(analyzeHand).sort((a, b) => a.center[0] - b.center[0]);
+  const assigned = [null, null];
+  hs.forEach(h => {
+    let bi = -1, bc = 1e12;
+    for (let i = 0; i < 2; i++) {
+      if (assigned[i]) continue;
+      const s = slots[i], c = s.active ? Math.hypot(h.center[0] - s.center[0], h.center[1] - s.center[1]) : 1e9 + i;
+      if (c < bc) { bc = c; bi = i; }
+    }
+    assigned[bi] = h;
+  });
+  for (let i = 0; i < 2; i++) {
+    const h = assigned[i];
+    if (h) { if (!slots[i].active) slots[i] = newSlot(); applyHand(slots[i], h, now, dt); }
+    else if (slots[i].active) { slots[i].vis = false; if (now - slots[i].lastSeen > .35) releaseSlot(i); }
+  }
+  gestureLogic(now, dt);
+}
+
+function releaseSlot(i) {
+  const s = slots[i];
+  if (s.holding) releaseHold(s, i);
+  if (pen.active && pen.slot === i) finishStroke();
+  slots[i] = newSlot();
+}
+
+/* ---- ushlash ---- */
+function screenRadius(S) {
+  const dist = camera.position.z - S.g.position.z;
+  return S.radius * S.g.scale.x * CV.h / (2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+}
+function nearest(sx, sy) {
+  let best = null, bd = 1e9;
+  for (const S of shapes) {
+    if (S.dying) continue;
+    const p = w2s(S.g.position), dd = Math.hypot(p[0] - sx, p[1] - sy);
+    if (dd < screenRadius(S) + 70 && dd < bd) { bd = dd; best = S; }
+  }
+  return best;
+}
+function rebase(S) {
+  const hs = S.holders.map(i => slots[i]).filter(Boolean);
+  S.z0 = S.g.position.z; S.rot0 = S.g.rotation.z; S.sc0 = S.scT;
+  hs.forEach(s => { s.palm0 = s.palm; s.roll0 = s.roll; });
+  if (hs.length === 2) {
+    const a = hs[0].pinchSm, b = hs[1].pinchSm;
+    S.dist0 = Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), 40); S.ang0 = Math.atan2(b[1] - a[1], b[0] - a[0]);
+  }
+}
+function startHold(S, s, i) {
+  S.holders.push(i); s.holding = S; S.vel.set(0, 0, 0); S.holdVel.set(0, 0, 0); S.target.copy(S.g.position); S.prevPos.copy(S.g.position);
+  rebase(S); sfx.grab(); haptic('light'); state.lastActive = performance.now() / 1000;
+}
+function releaseHold(s, i) {
+  const S = s.holding; s.holding = null; if (!S) return;
+  S.holders = S.holders.filter(x => x !== i);
+  if (!S.holders.length) { S.vel.copy(S.holdVel).clampLength(0, 16); S.holdVel.set(0, 0, 0); sfx.drop(); haptic('light'); }
+  else rebase(S);
+}
+function updateHoldTargets() {
+  for (const S of shapes) {
+    if (!S.holders.length) continue;
+    const hs = S.holders.map(i => slots[i]).filter(Boolean);
+    if (hs.length === 1) {
+      const s = hs[0], z = clamp(S.z0 + (s.palm - s.palm0) * 14, -2.5, 2.5);
+      s2w(s.pinchSm[0], s.pinchSm[1], z, S.target); S.rotT = S.rot0 - angDiff(s.roll, s.roll0); S.hasRotT = true;
+    } else if (hs.length === 2) {
+      const a = hs[0], b = hs[1], mx = (a.pinchSm[0] + b.pinchSm[0]) / 2, my = (a.pinchSm[1] + b.pinchSm[1]) / 2;
+      const z = clamp(S.z0 + ((a.palm + b.palm) / 2 - (a.palm0 + b.palm0) / 2) * 14, -2.5, 2.5);
+      s2w(mx, my, z, S.target);
+      const dist = Math.hypot(b.pinchSm[0] - a.pinchSm[0], b.pinchSm[1] - a.pinchSm[1]);
+      S.scT = clamp(S.sc0 * dist / S.dist0, .35, 3.6);
+      S.rotT = S.rot0 - angDiff(Math.atan2(b.pinchSm[1] - a.pinchSm[1], b.pinchSm[0] - a.pinchSm[0]), S.ang0); S.hasRotT = true;
+    }
+  }
+}
+
+/* ---- chizish ---- */
+function finishStroke() {
+  if (!pen.active) return;
+  pen.active = false; const pts = pen.pts; pen.pts = [];
+  if (pts.length < 10) return;
+  const res = recognize(pts);
+  pen.fades.push({ pts, born: performance.now() / 1000, hue: pen.hue });
+  if (!res) return;
+  if (res.kind === 'open') { toast('✏ Shakl yopilmadi — qayta chizing'); return; }
+  spawnRecognized(res);
+}
+function penUpdate(s, now) {
+  const x = s.tipSm[0], y = s.tipSm[1];
+  if (!pen.active) { pen.active = true; pen.slot = slots.indexOf(s); pen.pts = []; pen.start = now; pen.lastMove = now; pen.len = 0; pen.hue = Math.random(); pen.digitDone = false; }
+  const last = pen.pts[pen.pts.length - 1];
+  if (!last || Math.hypot(x - last.x, y - last.y) > 6) {
+    if (last) pen.len += Math.hypot(x - last.x, y - last.y);
+    pen.pts.push({ x, y }); pen.lastMove = now; if (pen.pts.length > 500) pen.pts.shift();
+  }
+  if (pen.len > 140 && now - pen.lastMove > .8) finishStroke();
+  else if (pen.len < 50 && now - pen.start > 1.5 && !pen.digitDone) { pen.digitDone = true; spawnDigit(1, x, y); }
+}
+
+/* ---- maxsus ishoralar ---- */
+function shock(pos) {
+  const c = new THREE.Color().setHSL(.9, 1, .6);
+  shockRing(pos, c); shockRing(pos, new THREE.Color().setHSL(.5, 1, .6));
+  for (let k = 0; k < 60; k++) { const a = k / 60 * 6.283; emit(pos.x, pos.y, pos.z, Math.cos(a) * 7, Math.sin(a) * 7, (Math.random() - .5) * 2, c, 1.2); }
+  for (const S of shapes) {
+    if (S.holders.length || S.dying) continue;
+    const dir = S.g.position.clone().sub(pos); const dd = dir.length();
+    S.vel.addScaledVector(dir.normalize(), 14 / (1 + dd * .5));
+  }
+  bloomKick = 1; sfx.boom(); notif('warning'); toast('🤘 Zarba!');
+}
+function clearAll() {
+  const list = shapes.slice();
+  list.forEach(S => { burst(S.g.position, S.base, 48, 5); S.holders = []; removeShape(S); });
+  slots.forEach(s => s.holding = null);
+  $('flash').classList.add('on'); setTimeout(() => $('flash').classList.remove('on'), 60);
+  bloomKick = 1.6; sfx.clear(); notif('error'); toast('💥 Hammasi portladi');
+}
+
+function gestureLogic(now, dt) {
+  const act = slots.filter(s => s.active && s.vis);
+  state.magnets = [];
+  if (act.length) state.lastHandSeen = now;
+
+  // L-ramka
+  const frameOn = act.length === 2 && act.every(isFrame);
+  if (frameOn) {
+    const pts = act.flatMap(s => [toScreen(s.lm[4]), toScreen(s.lm[8])]);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const r = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+    if (!state.frame) state.frameSince = now;
+    state.frame = r;
+    state.frameProg = state.frameLock ? 1 : clamp((now - state.frameSince) / 1, 0, 1);
+    if (!state.frameLock && now - state.frameSince > 1 && r.x1 - r.x0 > 90 && r.y1 - r.y0 > 90) { state.frameLock = true; spawnBoxFromRect(r); }
+  } else { state.frame = null; state.frameLock = false; state.frameProg = 0; }
+
+  act.forEach(s => {
+    const i = slots.indexOf(s);
+    if (s.holding && s.pose !== 'pinch') releaseHold(s, i);
+    if (s.pose === 'pinch' && !s.holding && now - s.poseSince < .6) {
+      const S = nearest(s.pinchSm[0], s.pinchSm[1]);
+      if (S) startHold(S, s, i);
+    }
+    if (s.pose === 'fist' && now - s.poseSince > .55) state.magnets.push(s.center);
+    if (s.poseChanged) {
+      if (s.pose === 'thumb' && now - state.lastGravity > 1.2) {
+        state.lastGravity = now; state.gravity = !state.gravity; sfx.grav(); haptic('medium');
+        toast(state.gravity ? '⬇ Gravitatsiya yoqildi' : '☁ Gravitatsiya o‘chdi'); state.lastActive = now;
+      }
+      if (s.pose === 'rock' && now - state.lastShock > .8) { state.lastShock = now; shock(s2w(s.center[0], s.center[1], 0)); state.lastActive = now; }
+      if (s.pose === 'num' && s.count >= 4) { s.openness = 'open'; s.openAt = now; }
+      if (s.pose === 'fist' && s.openness === 'open' && now - s.openAt < 1.6) {
+        s.openness = 'closed'; state.closeEvents.push(now); sfx.tick(); haptic('light');
+        state.closeEvents = state.closeEvents.filter(t => now - t < 3.2);
+        if (state.closeEvents.length >= 2) { state.closeEvents = []; clearAll(); }
+      }
+    }
+  });
+
+  // qalam
+  const penSlot = frameOn ? null : act.find(s => s.pose === 'point');
+  if (penSlot) penUpdate(penSlot, now); else if (pen.active) finishStroke();
+
+  // raqamlar
+  const okPoses = ['num', 'peace', 'fist'];
+  let total = 0, ok = act.length > 0 && !frameOn, cx = 0, cy = 0;
+  act.forEach(s => { if (!okPoses.includes(s.pose)) ok = false; total += s.count; cx += s.center[0] / act.length; cy += s.center[1] / act.length; });
+  const steady = act.every(s => s.speed < .12);
+  const key = (ok && steady && total >= 2 && total <= 10) ? total : -1;
+  if (key !== state.numKey) { state.numKey = key; state.numSince = now; state.numLock = false; }
+  state.numProg = key > 0 ? (state.numLock ? 1 : clamp((now - state.numSince) / 1.5, 0, 1)) : 0;
+  state.numPos = [cx, cy];
+  if (key > 0 && !state.numLock && now - state.numSince > 1.5) { state.numLock = true; spawnDigit(key, cx, cy); }
+
+  // faollik
+  const moving = act.some(s => s.speed > .05);
+  if (act.length && (moving || act.some(s => s.holding) || pen.active || state.magnets.length || state.numProg > 0)) state.lastActive = now;
+
+  updateHoldTargets();
+}
+
+/* ================= Fizika / Yangilash ================= */
+let bloomKick = 0, idleLevel = 0, lastDissolve = 0, lastSpark = 0;
+const clock = new THREE.Clock();
+const tmpV = new THREE.Vector3();
+
+function updateIdle(now) {
+  if (!shapes.length || !started) { idleLevel = 0; return; }
+  const anyHand = slots.some(s => s.active && s.vis);
+  const noHand = anyHand ? 0 : now - state.lastHandSeen, still = now - state.lastActive;
+  idleLevel = Math.max(noHand / IDLE_NOHAND, still / IDLE_STILL);
+  if (idleLevel >= 1 && now - lastDissolve > .18) {
+    const S = shapes.find(s => !s.dying && !s.holders.length);
+    if (S) { dissolve(S); lastDissolve = now; }
+  }
+}
+
+function updateShapes(dt, t) {
+  const H0 = visH(), W0 = H0 * camera.aspect, bx = W0 / 2 * .92, by = H0 / 2 * .9;
+  for (let n = shapes.length - 1; n >= 0; n--) {
+    const S = shapes[n], g = S.g;
+    if (S.holders.length) {
+      g.position.lerp(S.target, 1 - Math.exp(-dt * 22));
+      tmpV.copy(g.position).sub(S.prevPos).divideScalar(Math.max(dt, .001));
+      S.holdVel.lerp(tmpV, .3); S.vel.set(0, 0, 0);
+      if (S.hasRotT) g.rotation.z += angDiff(S.rotT, g.rotation.z) * (1 - Math.exp(-dt * 14));
+      if (Math.random() < .6) emit(g.position.x + (Math.random() - .5) * .3, g.position.y + (Math.random() - .5) * .3, g.position.z, 0, 0, 0, S.base, 1.6);
+    } else {
+      if (state.gravity) S.vel.y -= 9 * dt;
+      for (const m of state.magnets) {
+        s2w(m[0], m[1], g.position.z, tmpV).sub(g.position);
+        const dd = tmpV.length() + .001; tmpV.divideScalar(dd);
+        S.vel.addScaledVector(tmpV, 24 * dt).add(new THREE.Vector3(-tmpV.y, tmpV.x, 0).multiplyScalar(10 * dt));
+        S.vel.multiplyScalar(1 - 1.8 * dt);
+      }
+      S.vel.multiplyScalar(1 - (state.gravity ? .12 : 1.0) * dt);
+      g.position.addScaledVector(S.vel, dt);
+      if (!state.gravity && S.vel.lengthSq() < .5) g.position.y += Math.sin(t * 1.4 + S.phase) * .0016;
+      const rx = S.radius * S.sc * .7;
+      if (g.position.x > bx - rx) { g.position.x = bx - rx; if (S.vel.x > 0) { S.vel.x *= -.78; if (Math.abs(S.vel.x) > 2) sfx.bounce(); } }
+      if (g.position.x < -bx + rx) { g.position.x = -bx + rx; if (S.vel.x < 0) { S.vel.x *= -.78; if (Math.abs(S.vel.x) > 2) sfx.bounce(); } }
+      if (g.position.y > by - rx) { g.position.y = by - rx; if (S.vel.y > 0) S.vel.y *= -.78; }
+      if (g.position.y < -by + rx) { g.position.y = -by + rx; if (S.vel.y < 0) { S.vel.y *= -.78; if (state.gravity && Math.abs(S.vel.y) < 1.2) S.vel.y = 0; else if (Math.abs(S.vel.y) > 2) sfx.bounce(); } }
+      if (Math.abs(g.position.z) > 2.6) { g.position.z = Math.sign(g.position.z) * 2.6; S.vel.z *= -.7; }
+      const sp = S.vel.length();
+      if (sp > 2 && Math.random() < .5) emit(g.position.x, g.position.y, g.position.z, 0, 0, 0, S.base, 2);
+    }
+    S.prevPos.copy(g.position);
+    const spin = S.holders.length ? .35 : 1;
+    g.rotation.x += S.rotVel.x * dt * spin; g.rotation.y += S.rotVel.y * dt * spin;
+    if (S.type === 'rod' && !S.holders.length) g.rotation.x += 0;
+    S.sc += (S.scT - S.sc) * (1 - Math.exp(-dt * 9));
+    g.scale.setScalar(Math.max(S.sc * (1 + .035 * Math.sin(t * 3 + S.phase)), .0001));
+    // yorqinlik
+    let b = S.holders.length ? 1.9 : 1;
+    if (idleLevel > .65 && !S.dying) b *= .55 + .45 * Math.abs(Math.sin(t * 9));
+    S.bright += (b - S.bright) * .25;
+    S.layers.forEach((l, k) => l.material.color.copy(S.base).multiplyScalar(LAYER_INT[k] * S.bright));
+    S.fill.material.color.copy(S.base).multiplyScalar(.6 * S.bright);
+    if (S.dying && S.sc < .05) removeShape(S);
+  }
+  // to'qnashuvlar
+  for (let i = 0; i < shapes.length; i++) for (let j = i + 1; j < shapes.length; j++) {
+    const A = shapes[i], B = shapes[j];
+    if (A.dying || B.dying || (A.holders.length && B.holders.length)) continue;
+    tmpV.copy(B.g.position).sub(A.g.position); const dd = tmpV.length(), md = (A.radius * A.sc + B.radius * B.sc) * .75;
+    if (dd < md && dd > .001) {
+      tmpV.divideScalar(dd);
+      const rel = A.vel.clone().sub(B.vel).dot(tmpV);
+      const aH = A.holders.length > 0, bH = B.holders.length > 0, push = (md - dd);
+      if (!aH) A.g.position.addScaledVector(tmpV, -push * (bH ? 1 : .5));
+      if (!bH) B.g.position.addScaledVector(tmpV, push * (aH ? 1 : .5));
+      if (rel > 0 || aH || bH) {
+        const imp = Math.max(rel, aH || bH ? 3 : 0) * .95;
+        if (!aH) A.vel.addScaledVector(tmpV, -imp); if (!bH) B.vel.addScaledVector(tmpV, imp);
+        const nowS = performance.now() / 1000;
+        if (nowS - lastSpark > .08 && imp > 1) {
+          lastSpark = nowS; const mid = A.g.position.clone().add(B.g.position).multiplyScalar(.5);
+          burst(mid, A.base.clone().lerp(B.base, .5), 8, 2.2); sfx.bounce(); haptic('light');
+        }
+      }
+    }
+  }
+}
+
+/* ================= HUD ================= */
+const poseEl = $('pose'), bCount = $('bCount'), bGrav = $('bGrav'), idleEl = $('idle'), idleFill = $('idleFill');
+const cache = {};
+const setTxt = (el, key, v) => { if (cache[key] !== v) { cache[key] = v; el.textContent = v; } };
+let toastTimer = 0;
+function toast(txt) { const el = $('toast'); el.textContent = txt; el.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('on'), 1500); }
+const POSE_LABEL = { point: '☝ Chizish', pinch: '🤏 Ushlash', fist: '✊ Magnit', thumb: '👍 Gravitatsiya', rock: '🤘 Zarba', peace: '✌ 2', num: '🖐 ' };
+function updateHud(now) {
+  const act = slots.filter(s => s.active && s.vis);
+  let txt;
+  if (!act.length) txt = '🖐 Qo‘lingizni ko‘rsating';
+  else if (state.frame) txt = '🖼 Ramka ' + Math.round(state.frameProg * 100) + '%';
+  else if (state.numProg > 0 && state.numProg < 1) txt = '🔢 ' + state.numKey + ' … ' + Math.round(state.numProg * 100) + '%';
+  else { const s = act[0]; txt = (POSE_LABEL[s.pose] || '🖐 ') + (s.pose === 'num' ? s.count : ''); if (act.length === 2 && act[1].pose !== act[0].pose) txt += ' · ' + (POSE_LABEL[act[1].pose] || '🖐 ') + (act[1].pose === 'num' ? act[1].count : ''); }
+  state.closeEvents = state.closeEvents.filter(t => now - t < 3.2);
+  if (state.closeEvents.length) txt = '✋✊ ' + state.closeEvents.length + '/2 — yana bir marta!';
+  setTxt(poseEl, 'pose', txt);
+  setTxt(bCount, 'cnt', 'Shakllar ' + shapes.filter(s => !s.dying).length);
+  bGrav.classList.toggle('on', state.gravity);
+  const showIdle = shapes.length && idleLevel > .3;
+  idleEl.classList.toggle('on', !!showIdle);
+  if (showIdle) idleFill.style.width = Math.min(100, idleLevel * 100) + '%';
+}
+
+/* ================= Overlay (skelet, qalam, ramka) ================= */
+const octx = $('skel').getContext('2d');
+const CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function strokePath(pts, alpha, hue) {
+  if (pts.length < 2) return;
+  octx.globalAlpha = alpha; octx.shadowBlur = 22;
+  const col = `hsl(${hue * 360},100%,60%)`; octx.strokeStyle = col; octx.shadowColor = col; octx.lineWidth = 6;
+  octx.beginPath(); octx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) octx.lineTo(pts[i].x, pts[i].y); octx.stroke();
+  octx.shadowBlur = 0; octx.strokeStyle = '#fff'; octx.lineWidth = 2; octx.stroke();
+}
+function drawOverlay(now, t) {
+  const w = CV.w, h = CV.h; octx.clearRect(0, 0, w, h); octx.lineCap = 'round'; octx.lineJoin = 'round';
+  // skelet
+  slots.forEach((s, i) => {
+    if (!s.active || !s.vis || !s.lm) return;
+    const col = i ? '#ff3df0' : '#27f5ff'; octx.strokeStyle = col; octx.fillStyle = col; octx.shadowColor = col; octx.shadowBlur = 10; octx.globalAlpha = .5; octx.lineWidth = 2;
+    const P = s.lm.map(toScreen);
+    octx.beginPath(); CONN.forEach(([a, b]) => { octx.moveTo(P[a][0], P[a][1]); octx.lineTo(P[b][0], P[b][1]); }); octx.stroke();
+    octx.globalAlpha = .9; [4, 8, 12, 16, 20].forEach(k => { octx.beginPath(); octx.arc(P[k][0], P[k][1], 4, 0, 6.283); octx.fill(); });
+  });
+  octx.globalAlpha = 1;
+  // chizilayotgan va so'nayotgan chiziqlar
+  if (pen.active) strokePath(pen.pts, 1, (pen.hue + t * .1) % 1);
+  for (let i = pen.fades.length - 1; i >= 0; i--) { const f = pen.fades[i], a = 1 - (now - f.born) / .7; if (a <= 0) pen.fades.splice(i, 1); else strokePath(f.pts, a, f.hue); }
+  octx.globalAlpha = 1; octx.shadowBlur = 0;
+  // kursorlar
+  slots.forEach(s => {
+    if (!s.active || !s.vis) return;
+    if (s.pose === 'point' && s.tipSm) { octx.shadowColor = '#fff'; octx.shadowBlur = 18; octx.fillStyle = '#fff'; octx.beginPath(); octx.arc(s.tipSm[0], s.tipSm[1], 7, 0, 6.283); octx.fill(); }
+    if (s.pose === 'pinch' && s.pinchSm) {
+      const [px, py] = s.pinchSm, near = s.holding || nearest(px, py);
+      octx.shadowColor = '#ffe14d'; octx.shadowBlur = 16; octx.strokeStyle = '#ffe14d'; octx.lineWidth = 3;
+      octx.beginPath(); octx.arc(px, py, 14 + Math.sin(t * 10) * 2, 0, 6.283); octx.stroke();
+      if (near) { const c = w2s(near.g.position), r = screenRadius(near) + 12; octx.setLineDash([8, 8]); octx.lineDashOffset = -t * 30; octx.beginPath(); octx.arc(c[0], c[1], r, 0, 6.283); octx.stroke(); octx.setLineDash([]); octx.beginPath(); octx.moveTo(px, py); octx.lineTo(c[0], c[1]); octx.stroke(); }
+    }
+  });
+  // magnit halqalari
+  state.magnets.forEach(m => { octx.shadowColor = '#b05cff'; octx.strokeStyle = '#b05cff'; octx.shadowBlur = 16; octx.lineWidth = 2; for (let k = 0; k < 3; k++) { const r = 20 + ((t * 60 + k * 30) % 90); octx.globalAlpha = 1 - (r - 20) / 90; octx.beginPath(); octx.arc(m[0], m[1], r, 0, 6.283); octx.stroke(); } octx.globalAlpha = 1; });
+  // ramka
+  if (state.frame) {
+    const r = state.frame, p = state.frameProg, col = '#9dff3d';
+    octx.shadowColor = col; octx.shadowBlur = 18; octx.strokeStyle = col; octx.lineWidth = 3; octx.fillStyle = col;
+    octx.globalAlpha = .1 + p * .18; octx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0); octx.globalAlpha = 1;
+    octx.setLineDash([12, 8]); octx.lineDashOffset = -t * 40; octx.strokeRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0); octx.setLineDash([]);
+    octx.lineWidth = 6; const L = 26; [[r.x0, r.y0, 1, 1], [r.x1, r.y0, -1, 1], [r.x0, r.y1, 1, -1], [r.x1, r.y1, -1, -1]].forEach(([x, y, a, b]) => { octx.beginPath(); octx.moveTo(x + a * L, y); octx.lineTo(x, y); octx.lineTo(x, y + b * L); octx.stroke(); });
+  }
+  // raqam progress
+  if (state.numProg > 0 && state.numProg < 1) {
+    const [x, y] = state.numPos; octx.shadowColor = '#27f5ff'; octx.shadowBlur = 16; octx.strokeStyle = '#27f5ff'; octx.lineWidth = 6;
+    octx.beginPath(); octx.arc(x, y, 48, -Math.PI / 2, -Math.PI / 2 + state.numProg * 6.283); octx.stroke();
+    octx.fillStyle = '#fff'; octx.font = '800 34px system-ui'; octx.textAlign = 'center'; octx.textBaseline = 'middle'; octx.fillText(state.numKey, x, y + 2);
+  }
+  octx.shadowBlur = 0; octx.globalAlpha = 1;
+}
+
+/* ================= Asosiy sikl ================= */
+function frame() {
+  requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), .05), t = clock.elapsedTime, now = performance.now() / 1000;
+  updateIdle(now); updateShapes(dt, t); updateParticles(dt); updateRings(dt);
+  bloomKick *= Math.pow(.015, dt); bloom.strength = 1.1 + bloomKick * 1.3;
+  drawOverlay(now, t); updateHud(now); composer.render();
+}
+frame();
+
+/* ================= Kamera + MediaPipe ================= */
+$('helpBtn').onclick = () => $('help').classList.add('on');
+$('helpClose').onclick = () => $('help').classList.remove('on');
+
+$('go').addEventListener('click', async () => {
+  const msg = $('msg'); msg.textContent = ''; initAudio();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    video.srcObject = stream; await video.play(); updateCover();
+    $('go').disabled = true; $('go').textContent = 'Yuklanmoqda…';
+    const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .6, minTrackingConfidence: .55 });
+    hands.onResults(processHands);
+    await hands.initialize();
+    $('start').style.display = 'none'; started = true;
+    state.lastHandSeen = state.lastActive = performance.now() / 1000;
+    $('help').classList.add('on');
+    let busy = false, slow = 0, lowered = false;
+    const loop = async () => {
+      if (video.readyState >= 2 && !busy) {
+        busy = true; const t0 = performance.now();
+        try { await hands.send({ image: video }); } catch (e) {}
+        const ms = performance.now() - t0; slow = ms > 65 ? slow + 1 : Math.max(0, slow - 1);
+        if (slow > 40 && !lowered) { lowered = true; hands.setOptions({ modelComplexity: 0 }); }
+        busy = false;
+      }
+      requestAnimationFrame(loop);
+    };
+    loop();
+  } catch (e) {
+    $('go').disabled = false; $('go').textContent = 'Qayta urinish';
+    msg.textContent = e.name === 'NotAllowedError' ? 'Kamera ruxsati berilmadi. Telegram sozlamalaridan ruxsat bering.' : 'Xato: ' + (e.message || e.name);
+  }
+});
+</script>
+</body>
+</html>
